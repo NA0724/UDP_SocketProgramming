@@ -145,6 +145,7 @@ void showPacket(struct dataPacket data) {
     printf("Type: %u\n", data.payload.frame_control.type);
     printf("Sub Type: %u\n", data.payload.frame_control.sub_type);
     printf("FCS: %u\n", data.payload.fcs);
+    printf("Duration ID: %u\n", data.payload.durationID);
 }
 
 int verifyFCS(struct dataPacket data, uint32_t receivedFCS) {
@@ -198,11 +199,15 @@ int main() {
                 printf("Sending Probe Response...\n");
             } else if (type == 1 && sub_type == 11){
                 setCTS(&responsePacket.payload);
+                if (requestPacket.payload.durationID == 12){
+                    responsePacket.payload.durationID = 11;
+                }
                 printf("Sending CTS Response...\n");
             } else if (type == 2 && sub_type == 0 ){
                 setAck(&responsePacket.payload);
+                memcpy(responsePacket.payload.payload, requestPacket.payload.payload, sizeof(requestPacket.payload.payload));
                 printf("Sending ACK Response...\n");
-            }
+            } 
             responsePacket.payload.fcs = getCheckSumValue(&responsePacket.payload, sizeof(responsePacket.payload), 0, sizeof(responsePacket.payload.fcs));
             if (sendto(socket_fd, &responsePacket, sizeof(responsePacket), 0, (struct sockaddr *)&cliaddr, cliaddr_len) < 0) {
                 perror("sendto failed");

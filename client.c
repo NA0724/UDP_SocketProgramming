@@ -10,6 +10,7 @@
 #define PORT 8080
 #define SERVER_IP "127.0.0.1"
 #define BUFFER_SIZE 1024
+#define TOTAL_FRAGMENTS 5
 
 #define START_OF_PACKET_ID 0XFFFF 			                                // Start of Packet identifier
 #define END_OF_PACKET_ID 0XFFFF 			                                // End of Packet identifier
@@ -148,8 +149,48 @@ void showPacket(struct dataPacket data) {
     printf("Type: %u\n", data.payload.frame_control.type);
     printf("Sub Type: %u\n", data.payload.frame_control.sub_type);
     printf("FCS: %u\n", data.payload.fcs);
+    printf("Duration ID: %u\n", data.payload.durationID);
+    printf("More fragments: %u\n", data.payload.frame_control.more_fragment);
 }
 
+struct dataPacket fillDataPacketWithSegment(const char* dataSegment, int segmentSize) {
+    struct dataPacket data = fillDataPacket();
+    setData(&data.payload);
+    // Copy the data segment into the payload, ensuring not to overflow the payload buffer
+    memcpy(data.payload.payload, dataSegment, segmentSize);
+    return data;
+}
+
+void sendFragment(const char *fragment, int fragmentNumber) {
+    // Placeholder for your network sending function
+    printf("Sending Fragment #%d: %s\n", fragmentNumber, fragment);
+}
+
+struct dataPacket* sendMultipleFrames() {
+    struct dataPacket* packets = malloc(TOTAL_FRAGMENTS * sizeof(struct dataPacket));
+    if (packets == NULL) {
+        perror("Memory allocation failed");
+        return NULL; // Allocation failed
+    }
+    FILE *file = fopen("payload.txt", "r");
+    if (file == NULL) {
+        perror("Failed to open file");
+        free(packets);
+        return NULL;
+    }
+    char line[1024];
+    for (int i = 0; i < TOTAL_FRAGMENTS; ++i) {
+        if (fgets(line, sizeof(line), file) == NULL) break; // End of file or error
+        line[strcspn(line, "\n")] = 0; 
+        packets[i] = fillDataPacketWithSegment(line, strlen(line));
+        // Adjusting Duration ID and More Fragment bit for each packet
+        packets[i].payload.durationID = 12 - i;
+        packets[i].payload.frame_control.more_fragment = (i < TOTAL_FRAGMENTS - 1) ? 1 : 0;
+    }
+
+    fclose(file);
+    return packets;
+}
 
 int processDataPacket(int option){
     int socket_fd;
@@ -157,7 +198,8 @@ int processDataPacket(int option){
     struct dataPacket responsePacket, requestPacket;
     memset(&requestPacket, 0, sizeof(requestPacket)); 
     memset(&responsePacket, 0, sizeof(responsePacket));
-    char *message;
+    int fcsoption = 0;
+    int multiple = 0;
     FILE *fp;
     char line[255];
     int retryCounter = 0;
@@ -192,20 +234,42 @@ int processDataPacket(int option){
             // probeRequest message
             setProbeRequest(&requestPacket.payload);
         } else if (option ==3){
-            printf("Sending RTS Response to Server......\n");
+            printf("Sending RTS Request to Server......\n");
             // RTS request message
             setRTS(&requestPacket.payload);
         } else if (option == 4){
             printf("Sending Data Packet to Server......\n");
             // Data packet
             setData(&requestPacket.payload);
+            // Hardcoded data for "UDP Socket Programming Data Frame"
+            uint8_t hardcodedData[] = {
+                        0x55, 0x44, 0x50, 0x20, // UDP_
+                        0x53, 0x6f, 0x63, 0x6b, 0x65, 0x74, 0x20, // Socket_
+                        0x50, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x6d, 0x69, 0x6e, 0x67, 0x20, // Programming_
+                        0x44, 0x61, 0x74, 0x61, 0x20, // Data_
+                        0x46, 0x72, 0x61, 0x6d, 0x65 // Frame
+            };
+            size_t dataLen = sizeof(hardcodedData);
+            memcpy(&requestPacket.payload.payload, hardcodedData, dataLen);
+            if (dataLen < 2312) {
+                memset(&requestPacket.payload.payload + dataLen, 0xFF, 2312 - dataLen);
+            }
+        } else if (option == 5){
+            printf("FCS Error Handling Scenario...");
+            fcsoption = 1;
+            setData(&requestPacket.payload);
+        } else if (option == 6){
+            printf(" Sending Multiple fragmentented Frames.....\n");
+            printf(" RTS frame sent....\n");
+            setRTS(&requestPacket.payload);
+            requestPacket.payload.durationID = 12;
+            multiple = 1;
         }
         requestPacket.payload.fcs = getCheckSumValue(&requestPacket.payload, sizeof(requestPacket.payload), 0, sizeof(requestPacket.payload.fcs));
         showPacket(requestPacket);
         //printStructureBytes(&requestPacket, sizeof(requestPacket));
         sendto(socket_fd, &requestPacket, sizeof(requestPacket), 0, (struct sockaddr *)&servaddr, servaddr_len);
-        printf("\nFrame sent with calculated FCS.\n");
-        
+        printf("\nFrame sent with calculated FCS.\n");    
         n = recvfrom(socket_fd, &responsePacket, sizeof(responsePacket), 0 , (struct sockaddr *)&servaddr, &servaddr_len);
         printf("\n Response from Server : "); 
         if(n <= 0){
@@ -215,16 +279,44 @@ int processDataPacket(int option){
         } else {
             uint32_t calculatedFCS = getCheckSumValue(&responsePacket.payload, sizeof(responsePacket.payload), 0, sizeof(responsePacket.payload.fcs));
             if (calculatedFCS == responsePacket.payload.fcs) {
-            // FCS matches, process the packet
-                printf("Received frame with valid FCS.\n");
-                printf("\n Association Response from server... \n");
-                showPacket(responsePacket);
+                if (fcsoption == 1 && responsePacket.payload.frame_control.type == 1 && responsePacket.payload.frame_control.sub_type == 13){
+                    printf("\nACK received for valid frame\n");
+                    showPacket(responsePacket);
+                    // Now send a frame with incorrect FCS
+                    struct dataPacket faultyPacket = fillDataPacket(); // Fill your packet as usual
+                    faultyPacket.payload.fcs = 0xFFFFFFFF; // Incorrect FCS
+                    printf("\n****************************************************\n");
+                    printf("\nInvalid data packet request\n");
+                    showPacket(faultyPacket);
+                    sendto(socket_fd, &faultyPacket, sizeof(faultyPacket), 0, (const struct sockaddr *)&servaddr, sizeof(servaddr));
+                    printf("Sent frame with incorrect FCS.\n");
+                } else if (multiple == 1){
+                    printf("CTS frame recieved from server......\n");
+                    showPacket(responsePacket);
+                    struct dataPacket* multipleFrames = sendMultipleFrames();
+                    if (multipleFrames == NULL) {
+                        return EXIT_FAILURE;
+                    }
+                    printf(" Sending fragmented frames to server......\n");
+                    for (int i = 0; i < TOTAL_FRAGMENTS; i++) {
+                        multipleFrames[i].payload.fcs = getCheckSumValue(&multipleFrames[i].payload, sizeof(multipleFrames[i].payload), 0, sizeof(multipleFrames[i].payload.fcs));
+                        sendto(socket_fd, &multipleFrames[i], sizeof(multipleFrames[i]), 0, (const struct sockaddr*)&servaddr, sizeof(servaddr));
+                        printf("Packet #%d sent.\n", i + 1);
+                    }
+                    free(multipleFrames);
+                }
+                else {
+                    // FCS matches, process the packet
+                    printf("Received frame with valid FCS.\n");
+                    showPacket(responsePacket);
+                }
             } else {
                 // FCS mismatch, display error
                 printf("Error: FCS (Frame Check Sequence) Error.\n");
             }
-        }                 
-    }
+        } 
+    }                 
+    
     if(retryCounter >= 3)
     {
         printf("\n ERROR : Access Point does not respond");
@@ -236,8 +328,6 @@ int processDataPacket(int option){
     return 0;
 }
 
-
-
 int main() {
     int number;
     printf(" Choose the type of message to send from client to server. Enter the option number (1, 2, 3 or 4) \n");
@@ -246,8 +336,10 @@ int main() {
     printf("2. Probe Request\n");
     printf("3. RTS Request \n");
     printf("4. Data Request\n");
+    printf("5. Verify FCS Error Handling on Faulty Data Request Packet.\n");
+    printf("6. Send Multiple Frames\n");
     scanf("%d", &number);
-    if (number >=1 && number <=4) {
+    if (number >=1 && number <=6) {
         processDataPacket(number);
     } else {
         printf("\n Retry again with correct option");
