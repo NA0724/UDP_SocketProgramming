@@ -93,26 +93,27 @@ void setProbeRequest(struct ieee80211_frame *frame) {
     frame->frame_control.type = 0; // Management type
     frame->frame_control.sub_type = 4; // Probe Request subtype (binary 0100)
     frame->durationID = 0; 
-    }
+}
 
 // Function to set frame control fields for a RTS (Request To Send)
 void setRTS(struct ieee80211_frame *frame) {
     frame->frame_control.type = 1; // Control type
     frame->frame_control.sub_type = 11; // RTS subtype (binary 1011)
     frame->durationID = 4; 
-    }
+}
 
 // Function to set frame control fields for sending Data
-void setData(struct ieee80211_frame *frame) {
+void setData(struct ieee80211_frame *frame, const char* dataSegment, int segmentSize) {
+    memcpy(frame->payload, dataSegment, segmentSize);
     frame->frame_control.type = 2; // Data type
     frame->frame_control.sub_type = 0; // Subtype for Data
     frame->durationID = 2; 
-    }
+}
 
 //print  the packet
 void showPacket(struct dataPacket data) {
     
-    printf("\n------Packet Information------ \n");
+    printf("\n\033[34m------Packet Information------ \n");
     printf("Address 1: %02X%02X%02X%02X%02X%02X\n",
            data.payload.address1[0], data.payload.address1[1], data.payload.address1[2],
            data.payload.address1[3], data.payload.address1[4], data.payload.address1[5]);
@@ -135,15 +136,13 @@ void showPacket(struct dataPacket data) {
     printf("Duration ID: %u\n", data.payload.durationID);
     printf("More fragments: %u\n", data.payload.frame_control.more_fragment);
     printf("Sequence Control: %u\n", data.payload.sequence_control);
-    printf("\n----------------------------------------------- \n");
+    printf("\n\033[34m----------------------------------------------- \033[0m\n");
 }
 
 struct dataPacket fillDataPacketWithSegmentAndFragmentation(uint16_t sequenceNumber, uint8_t fragmentNumber, const char* dataSegment, int segmentSize) {
     struct dataPacket data = fillDataPacket();
-    setData(&data.payload);
+    setData(&data.payload, dataSegment, segmentSize);
     data.payload.sequence_control = (sequenceNumber << TOTAL_FRAGMENTS) | (fragmentNumber & 0x0F); // Shift sequence number and add fragment number
-    // Copy the data segment into the payload, ensuring not to overflow the payload buffer
-    memcpy(data.payload.payload, dataSegment, segmentSize);
     return data;
 }
 
@@ -172,13 +171,13 @@ struct dataPacket* sendMultipleFrames() {
     for (int i = 0; i < TOTAL_FRAGMENTS; ++i) {
         if (fgets(line, sizeof(line), file) == NULL) break; // End of file or error
         line[strcspn(line, "\n")] = 0; 
-        packets[i] = fillDataPacketWithSegmentAndFragmentation(1, i, line, strlen(line));
+        packets[i] = fillDataPacketWithSegmentAndFragmentation(1, i+1, line, strlen(line));
         // Adjusting Duration ID and More Fragment bit for each packet
         packets[i].payload.durationID = 12 - i;
         packets[i].payload.frame_control.more_fragment = (i < TOTAL_FRAGMENTS - 1) ? 1 : 0;
         packets[i].payload.fcs = getCheckSumValue(&packets[i].payload, sizeof(packets[i].payload), 0, sizeof(packets[i].payload.fcs));
         if ( i  > 5){
-            packets[i].payload.sequence_control = (2 << TOTAL_FRAGMENTS) | (i & 0x0F);
+            packets[i].payload.sequence_control = (2 << TOTAL_FRAGMENTS) | (i+1 & 0x0F);
             introduceErrorToPayload(&packets[i]);
             
         }
@@ -202,6 +201,8 @@ int processDataPacket(int option){
 	int n = 0;
 	struct timeval timer;
     socklen_t servaddr_len = sizeof(servaddr);
+    const char* dataSegment = "Sample Data Packet";
+    int segmentSize = strlen(dataSegment);
 
     // Creating socket file descriptor
     if ((socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
@@ -236,24 +237,11 @@ int processDataPacket(int option){
         } else if (option == 4){
             printf("Sending Data Packet to Server......\n");
             // Data packet
-            setData(&requestPacket.payload);
-            // Hardcoded data for "UDP Socket Programming Data Frame"
-            uint8_t hardcodedData[] = {
-                        0x55, 0x44, 0x50, 0x20, // UDP_
-                        0x53, 0x6f, 0x63, 0x6b, 0x65, 0x74, 0x20, // Socket_
-                        0x50, 0x72, 0x6f, 0x67, 0x72, 0x61, 0x6d, 0x6d, 0x69, 0x6e, 0x67, 0x20, // Programming_
-                        0x44, 0x61, 0x74, 0x61, 0x20, // Data_
-                        0x46, 0x72, 0x61, 0x6d, 0x65 // Frame
-            };
-            size_t dataLen = sizeof(hardcodedData);
-            memcpy(&requestPacket.payload.payload, hardcodedData, dataLen);
-            if (dataLen < 2312) {
-                memset(&requestPacket.payload.payload + dataLen, 0xFF, 2312 - dataLen);
-            }
+            setData(&requestPacket.payload, dataSegment, segmentSize);
         } else if (option == 5){
             printf("FCS Error Handling Scenario...");
             fcsoption = 1;
-            setData(&requestPacket.payload);
+            setData(&requestPacket.payload, dataSegment, segmentSize);
         } else if (option == 6){
             printf(" Sending Multiple fragmentented Frames.....\n");
             printf(" RTS frame sent to server....\n");
@@ -265,7 +253,6 @@ int processDataPacket(int option){
         showPacket(requestPacket);
         //printStructureBytes(&requestPacket, sizeof(requestPacket));
         sendto(socket_fd, &requestPacket, sizeof(requestPacket), 0, (struct sockaddr *)&servaddr, servaddr_len);
-        printf("\nFrame sent with calculated FCS.\n");    
         n = recvfrom(socket_fd, &responsePacket, sizeof(responsePacket), 0 , (struct sockaddr *)&servaddr, &servaddr_len);
         printf("\n Response from Server : "); 
         if(n <= 0){
@@ -304,7 +291,7 @@ int processDataPacket(int option){
                 }
                 else {
                     // FCS matches, process the packet
-                    printf("Received frame with valid FCS.\n");
+                    printf("\033[32mReceived frame with valid FCS.\033[0m\n");
                     showPacket(responsePacket);
                 }
             } else {

@@ -111,7 +111,7 @@ void setAck(struct ieee80211_frame *frame) {
 //print the packet
 void showPacket(struct dataPacket data) {
     
-    printf("\n------Packet Information------ \n");
+    printf("\n\033[34m------Packet Information------ \n");
     printf("Address 1: %02X%02X%02X%02X%02X%02X\n",
            data.payload.address1[0], data.payload.address1[1], data.payload.address1[2],
            data.payload.address1[3], data.payload.address1[4], data.payload.address1[5]);
@@ -133,7 +133,7 @@ void showPacket(struct dataPacket data) {
     printf("FCS: %u\n", data.payload.fcs);
     printf("Duration ID: %u\n", data.payload.durationID);
     printf("Sequence Control: %u\n", data.payload.sequence_control);
-    printf("\n----------------------------------------------- \n");
+    printf("\n\033[34m-----------------------------------------------\033[0m\n");
 }
 
 int verifyFCS(struct dataPacket data, uint32_t receivedFCS) {
@@ -172,17 +172,16 @@ int main() {
         printf("----------------------------------------------------------------\n");
         n = recvfrom(socket_fd, &requestPacket, sizeof(requestPacket), 0 , (struct sockaddr *)&cliaddr, &cliaddr_len);
         uint16_t sequenceControl = requestPacket.payload.sequence_control;
-        if ( sequenceControl > 0)  {
-            printf("###### ENTERED HERE FOR SEQ CONTROL *****\n");
-            if (verifyFCS(requestPacket, requestPacket.payload.fcs == 0)){
-                printf("###### ENTERED HERE *****\n");
-                uint8_t fragmentNumber = sequenceControl & 0x0F;
-                printf("\033[31mNo ACK Received for Frame No. %d\033[0m\n", fragmentNumber);
-            }
-        }
         printf(" Packet recieved from client........\n");
         showPacket(requestPacket);
         printf("****************************************************************\n");
+        if ( sequenceControl > 0)  {
+            if (verifyFCS(requestPacket, requestPacket.payload.fcs) == 0){
+                uint8_t fragmentNumber = sequenceControl & 0x0F;
+                printf("\033[31mNo ACK Received for Frame No. %d\033[0m\n", fragmentNumber);
+                continue;
+            }
+        }
         if (verifyFCS(requestPacket, requestPacket.payload.fcs)) {
             type = requestPacket.payload.frame_control.type;
             sub_type = requestPacket.payload.frame_control.sub_type;
@@ -202,7 +201,7 @@ int main() {
             } else if (type == 2 && sub_type == 0 ){
                 setAck(&responsePacket.payload);
                 memcpy(responsePacket.payload.payload, requestPacket.payload.payload, sizeof(requestPacket.payload.payload));
-                if ( requestPacket.payload.sequence_control != 0)  {
+                if ( requestPacket.payload.sequence_control > 0)  {
                     responsePacket.payload.durationID = requestPacket.payload.durationID - 1;
                 }
                 printf("\033[32mSending ACK Response...\033[0m\n");
