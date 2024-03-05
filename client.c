@@ -10,7 +10,7 @@
 #define PORT 8080
 #define SERVER_IP "127.0.0.1"
 #define BUFFER_SIZE 1024
-#define TOTAL_FRAGMENTS 5
+#define TOTAL_FRAGMENTS 10
 
 #define START_OF_PACKET_ID 0XFFFF 			                                // Start of Packet identifier
 #define END_OF_PACKET_ID 0XFFFF 			                                // End of Packet identifier
@@ -74,26 +74,18 @@ struct dataPacket fillDataPacket(){
     memset(data.payload.address4, 0, sizeof(data.payload.address4)); // Address 4 set to 000000000000
     data.payload.frame_control.to_ds = 1;
     data.payload.frame_control.from_ds = 0;
+    memcpy(data.payload.address1, final_receiver_mac, sizeof(data.payload.address1));
+    memcpy(data.payload.address2, originator_mac, sizeof(data.payload.address2));
+    memcpy(data.payload.address3, access_point_mac, sizeof(data.payload.address3));
     return data;
 }
 
-void printStructureBytes(const void *ptr, size_t size) {
-    const unsigned char *byte = ptr;
-    printf("Structure bytes: ");
-    for (size_t i = 0; i < size; ++i) {
-        printf("%02X ", byte[i]);
-    }
-    printf("\n");
-}
 
 // Function to set frame control fields for an Association Request
 void setAssociationRequest(struct ieee80211_frame *frame) {
     frame->frame_control.type = 0; // Management type
     frame->frame_control.sub_type = 0; // Association Request subtype
     frame->durationID = 0; 
-    memcpy(frame->address1, final_receiver_mac, sizeof(frame->address1));
-    memcpy(frame->address2, originator_mac, sizeof(frame->address2));
-    memcpy(frame->address3, access_point_mac, sizeof(frame->address3));
 }
 
 // Function to set frame control fields for a Probe Request
@@ -101,30 +93,21 @@ void setProbeRequest(struct ieee80211_frame *frame) {
     frame->frame_control.type = 0; // Management type
     frame->frame_control.sub_type = 4; // Probe Request subtype (binary 0100)
     frame->durationID = 0; 
-    memcpy(frame->address1, final_receiver_mac, sizeof(frame->address1));
-    memcpy(frame->address2, originator_mac, sizeof(frame->address2));
-    memcpy(frame->address3, access_point_mac, sizeof(frame->address3));
-}
+    }
 
 // Function to set frame control fields for a RTS (Request To Send)
 void setRTS(struct ieee80211_frame *frame) {
     frame->frame_control.type = 1; // Control type
     frame->frame_control.sub_type = 11; // RTS subtype (binary 1011)
     frame->durationID = 4; 
-    memcpy(frame->address1, final_receiver_mac, sizeof(frame->address1));
-    memcpy(frame->address2, originator_mac, sizeof(frame->address2));
-    memcpy(frame->address3, access_point_mac, sizeof(frame->address3));
-}
+    }
 
 // Function to set frame control fields for sending Data
 void setData(struct ieee80211_frame *frame) {
     frame->frame_control.type = 2; // Data type
     frame->frame_control.sub_type = 0; // Subtype for Data
     frame->durationID = 2; 
-    memcpy(frame->address1, final_receiver_mac, sizeof(frame->address1));
-    memcpy(frame->address2, originator_mac, sizeof(frame->address2));
-    memcpy(frame->address3, access_point_mac, sizeof(frame->address3));
-}
+    }
 
 //print  the packet
 void showPacket(struct dataPacket data) {
@@ -151,19 +134,26 @@ void showPacket(struct dataPacket data) {
     printf("FCS: %u\n", data.payload.fcs);
     printf("Duration ID: %u\n", data.payload.durationID);
     printf("More fragments: %u\n", data.payload.frame_control.more_fragment);
+    printf("Sequence Control: %u\n", data.payload.sequence_control);
+    printf("\n----------------------------------------------- \n");
 }
 
-struct dataPacket fillDataPacketWithSegment(const char* dataSegment, int segmentSize) {
+struct dataPacket fillDataPacketWithSegmentAndFragmentation(uint16_t sequenceNumber, uint8_t fragmentNumber, const char* dataSegment, int segmentSize) {
     struct dataPacket data = fillDataPacket();
     setData(&data.payload);
+    data.payload.sequence_control = (sequenceNumber << TOTAL_FRAGMENTS) | (fragmentNumber & 0x0F); // Shift sequence number and add fragment number
     // Copy the data segment into the payload, ensuring not to overflow the payload buffer
     memcpy(data.payload.payload, dataSegment, segmentSize);
     return data;
 }
 
-void sendFragment(const char *fragment, int fragmentNumber) {
-    // Placeholder for your network sending function
-    printf("Sending Fragment #%d: %s\n", fragmentNumber, fragment);
+// Create Error Frames
+void introduceErrorToPayload(struct dataPacket *packet) {
+    // Example: Corrupt the first 10 bytes of the payload
+    for (int i = 0; i < 10; i++) {
+        packet->payload.payload[i] ^= 0xFF; // XOR with 0xFF to flip bits and simulate corruption
+    }
+    packet->payload.fcs = getCheckSumValue(&packet->payload, sizeof(packet->payload) - sizeof(packet->payload.fcs), 0, sizeof(packet->payload.fcs));
 }
 
 struct dataPacket* sendMultipleFrames() {
@@ -182,10 +172,16 @@ struct dataPacket* sendMultipleFrames() {
     for (int i = 0; i < TOTAL_FRAGMENTS; ++i) {
         if (fgets(line, sizeof(line), file) == NULL) break; // End of file or error
         line[strcspn(line, "\n")] = 0; 
-        packets[i] = fillDataPacketWithSegment(line, strlen(line));
+        packets[i] = fillDataPacketWithSegmentAndFragmentation(1, i, line, strlen(line));
         // Adjusting Duration ID and More Fragment bit for each packet
         packets[i].payload.durationID = 12 - i;
         packets[i].payload.frame_control.more_fragment = (i < TOTAL_FRAGMENTS - 1) ? 1 : 0;
+        packets[i].payload.fcs = getCheckSumValue(&packets[i].payload, sizeof(packets[i].payload), 0, sizeof(packets[i].payload.fcs));
+        if ( i  > 5){
+            packets[i].payload.sequence_control = (2 << TOTAL_FRAGMENTS) | (i & 0x0F);
+            introduceErrorToPayload(&packets[i]);
+            
+        }
     }
 
     fclose(file);
@@ -260,7 +256,7 @@ int processDataPacket(int option){
             setData(&requestPacket.payload);
         } else if (option == 6){
             printf(" Sending Multiple fragmentented Frames.....\n");
-            printf(" RTS frame sent....\n");
+            printf(" RTS frame sent to server....\n");
             setRTS(&requestPacket.payload);
             requestPacket.payload.durationID = 12;
             multiple = 1;
@@ -273,7 +269,7 @@ int processDataPacket(int option){
         n = recvfrom(socket_fd, &responsePacket, sizeof(responsePacket), 0 , (struct sockaddr *)&servaddr, &servaddr_len);
         printf("\n Response from Server : "); 
         if(n <= 0){
-            printf("ERROR  Server does not respond");
+            printf("\033[31mERROR  Server does not respond\033[0m\n");
             printf("\n Sending Packet Again.............. \n");
                 retryCounter++;
         } else {
@@ -297,9 +293,10 @@ int processDataPacket(int option){
                     if (multipleFrames == NULL) {
                         return EXIT_FAILURE;
                     }
+                    printf("\n****************************************************\n");
                     printf(" Sending fragmented frames to server......\n");
                     for (int i = 0; i < TOTAL_FRAGMENTS; i++) {
-                        multipleFrames[i].payload.fcs = getCheckSumValue(&multipleFrames[i].payload, sizeof(multipleFrames[i].payload), 0, sizeof(multipleFrames[i].payload.fcs));
+                        //multipleFrames[i].payload.fcs = getCheckSumValue(&multipleFrames[i].payload, sizeof(multipleFrames[i].payload), 0, sizeof(multipleFrames[i].payload.fcs));
                         sendto(socket_fd, &multipleFrames[i], sizeof(multipleFrames[i]), 0, (const struct sockaddr*)&servaddr, sizeof(servaddr));
                         printf("Packet #%d sent.\n", i + 1);
                     }
@@ -312,14 +309,14 @@ int processDataPacket(int option){
                 }
             } else {
                 // FCS mismatch, display error
-                printf("Error: FCS (Frame Check Sequence) Error.\n");
+                printf("\033[31mError: FCS (Frame Check Sequence) Error.\033[0m\n");
             }
         } 
     }                 
     
     if(retryCounter >= 3)
     {
-        printf("\n ERROR : Access Point does not respond");
+        printf("\n ERROR : “No ACK received from AP");
         exit(0);
     }
     printf("\n-----------------------------------------------------------------------------------------\n");
@@ -330,6 +327,7 @@ int processDataPacket(int option){
 
 int main() {
     int number;
+    printf("\n****************************************************\n");
     printf(" Choose the type of message to send from client to server. Enter the option number (1, 2, 3 or 4) \n");
     printf("---------------------------------------------------------------------\n");
     printf("1. Association Request\n");

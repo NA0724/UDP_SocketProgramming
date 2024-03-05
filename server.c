@@ -70,36 +70,25 @@ struct dataPacket fillDataPacket(){
     data.payload.frame_control.from_ds = 1;
     memset(data.payload.address4, 0, sizeof(data.payload.address4)); // Address 4 set to 000000000000
     data.end_ID = END_OF_PACKET_ID;
+    memcpy(data.payload.address1, final_receiver_mac, sizeof(data.payload.address1));
+    memcpy(data.payload.address2, originator_mac, sizeof(data.payload.address2));
+    memcpy(data.payload.address3, access_point_mac, sizeof(data.payload.address3));
     return data;
 }
 
-void printStructureBytes(const void *ptr, size_t size) {
-    const unsigned char *byte = ptr;
-    printf("Structure bytes: ");
-    for (size_t i = 0; i < size; ++i) {
-        printf("%02X ", byte[i]);
-    }
-    printf("\n");
-}
 
 // Function to set frame control fields for an Association Response
 void setAssociationResponse(struct ieee80211_frame *frame,  uint16_t durationID) {
     frame->frame_control.type = 0; // Management type
     frame->frame_control.sub_type = 1; // Association Request subtype
     frame->durationID = durationID; 
-    memcpy(frame->address1, final_receiver_mac, sizeof(frame->address1));
-    memcpy(frame->address2, originator_mac, sizeof(frame->address2));
-    memcpy(frame->address3, access_point_mac, sizeof(frame->address3));
 }
 
 // Function to set frame control fields for a Probe Request
-void setProbeResponse(struct ieee80211_frame *frame) {
+void setProbeResponse(struct ieee80211_frame *frame, uint16_t durationID) {
     //frame->frame_control.type = 0; // Management type
     //frame->frame_control.sub_type = 4; // Probe Request subtype (binary 0100)
-    frame->durationID = 0; 
-    memcpy(frame->address1, final_receiver_mac, sizeof(frame->address1));
-    memcpy(frame->address2, originator_mac, sizeof(frame->address2));
-    memcpy(frame->address3, access_point_mac, sizeof(frame->address3));
+    frame->durationID = durationID; 
 }
 
 // Function to set frame control fields for a RTS (Request To Send)
@@ -107,9 +96,6 @@ void setCTS(struct ieee80211_frame *frame) {
     frame->frame_control.type = 1; // Control type
     frame->frame_control.sub_type = 12; // CTS subtype (binary 1100)
     frame->durationID = 3; 
-    memcpy(frame->address1, final_receiver_mac, sizeof(frame->address1));
-    memcpy(frame->address2, originator_mac, sizeof(frame->address2));
-    memcpy(frame->address3, access_point_mac, sizeof(frame->address3));
 }
 
 // Function to set frame control fields for sending Data
@@ -146,12 +132,13 @@ void showPacket(struct dataPacket data) {
     printf("Sub Type: %u\n", data.payload.frame_control.sub_type);
     printf("FCS: %u\n", data.payload.fcs);
     printf("Duration ID: %u\n", data.payload.durationID);
+    printf("Sequence Control: %u\n", data.payload.sequence_control);
+    printf("\n----------------------------------------------- \n");
 }
 
 int verifyFCS(struct dataPacket data, uint32_t receivedFCS) {
     // Calculate FCS excluding the FCS field itself
     uint32_t calculatedFCS = getCheckSumValue(&data.payload, sizeof(data.payload) , 0, sizeof(data.payload.fcs));
-    printf("Calculated FCS: %u\n", calculatedFCS);
     return (calculatedFCS == receivedFCS) ? 1 : 0;
 }
 
@@ -184,40 +171,52 @@ int main() {
     {
         printf("----------------------------------------------------------------\n");
         n = recvfrom(socket_fd, &requestPacket, sizeof(requestPacket), 0 , (struct sockaddr *)&cliaddr, &cliaddr_len);
+        uint16_t sequenceControl = requestPacket.payload.sequence_control;
+        if ( sequenceControl > 0)  {
+            printf("###### ENTERED HERE FOR SEQ CONTROL *****\n");
+            if (verifyFCS(requestPacket, requestPacket.payload.fcs == 0)){
+                printf("###### ENTERED HERE *****\n");
+                uint8_t fragmentNumber = sequenceControl & 0x0F;
+                printf("\033[31mNo ACK Received for Frame No. %d\033[0m\n", fragmentNumber);
+            }
+        }
         printf(" Packet recieved from client........\n");
         showPacket(requestPacket);
-        //printStructureBytes(&requestPacket, sizeof(requestPacket));
+        printf("****************************************************************\n");
         if (verifyFCS(requestPacket, requestPacket.payload.fcs)) {
             type = requestPacket.payload.frame_control.type;
             sub_type = requestPacket.payload.frame_control.sub_type;
             responsePacket = fillDataPacket();
             if (type == 0 && sub_type == 0) {
                 setAssociationResponse(&responsePacket.payload, requestPacket.payload.durationID);
-                printf("Sending Association Response...\n");
+                printf("\033[32mSending Association Response...\033[0m\n");
             } else if (type == 0 && sub_type == 4){
-                setProbeResponse(&responsePacket.payload);
-                printf("Sending Probe Response...\n");
+                setProbeResponse(&responsePacket.payload, requestPacket.payload.durationID);
+                printf("\033[32mSending Probe Response...\033[0m\n");
             } else if (type == 1 && sub_type == 11){
                 setCTS(&responsePacket.payload);
                 if (requestPacket.payload.durationID == 12){
                     responsePacket.payload.durationID = 11;
                 }
-                printf("Sending CTS Response...\n");
+                printf("\033[32mSending CTS Response...\033[0m\n");
             } else if (type == 2 && sub_type == 0 ){
                 setAck(&responsePacket.payload);
                 memcpy(responsePacket.payload.payload, requestPacket.payload.payload, sizeof(requestPacket.payload.payload));
-                printf("Sending ACK Response...\n");
+                if ( requestPacket.payload.sequence_control != 0)  {
+                    responsePacket.payload.durationID = requestPacket.payload.durationID - 1;
+                }
+                printf("\033[32mSending ACK Response...\033[0m\n");
             } 
             responsePacket.payload.fcs = getCheckSumValue(&responsePacket.payload, sizeof(responsePacket.payload), 0, sizeof(responsePacket.payload.fcs));
             if (sendto(socket_fd, &responsePacket, sizeof(responsePacket), 0, (struct sockaddr *)&cliaddr, cliaddr_len) < 0) {
-                perror("sendto failed");
+                perror("\033[31msendto failed.\033[0m\n");
             } else {
-                printf("Response sent.\n");
+                printf("\nResponse sent with correct FCS:\n");
                 showPacket(responsePacket);
             }
         } else{
             // FCS mismatch, display error
-                printf("Error: FCS (Frame Check Sequence) Error.\n");
+                printf("\033[31mError: FCS (Frame Check Sequence) Error.\033[0m\n");
         } 
     }
     printf("\n-----------------------------------------------------------------------------------------\n");
