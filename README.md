@@ -19,7 +19,8 @@ Install gcc for C program compiler
 
 At the client side, a user menu with options for different type of packets to be sent to server/AP is displayed.
 
- 
+ <img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/cc16f536-b806-4fd4-b907-ee8fccaf6c00">
+
 
 Then as per the options selected, the client sends a packet to the server and the server responds accordingly.
 
@@ -30,11 +31,13 @@ Then as per the options selected, the client sends a packet to the server and th
 1.	Association Request and Response 
 
  
+<img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/389c3c53-da57-4a82-a3f0-db7477db9549">
 
 
 2.	Probe Request and Response 
 
  
+<img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/aaf58b41-3599-41bf-b044-dea626de652b">
 
 
 
@@ -48,11 +51,13 @@ Then as per the options selected, the client sends a packet to the server and th
 3.	RTS and CTS 
 
  
+<img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/72bee5cc-32b7-48d1-a575-95a175afbf14">
 
 
 4.	Data Packet and ACK
 
  
+<img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/e6cc5e7c-d6aa-46d5-836e-d15c43170d60">
 
 
 
@@ -67,13 +72,21 @@ Then as per the options selected, the client sends a packet to the server and th
 5.	FCS Error Handling 
 
  
+<img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/5403687a-5c29-4c2b-90ae-e9ef7700c3a2">
 
 
 6.	Sending multiple fragmented frames
 
+ <img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/71d01be3-4c90-4e14-bbab-cab0bf5919e8">
+
+
+  
+
  
 
  
+![image](https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/a64f3b93-9722-48f6-85ce-488632dc4b7d)
+
 
  
 
@@ -82,16 +95,19 @@ Then as per the options selected, the client sends a packet to the server and th
 4 error fragmented frames
 
  
+<img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/fc6dc398-e4eb-44be-8420-0356c6c6de8d">
 
 
 
 
 After ack_timer and retry_counter runs out, error message is displayed:
 
- 
+ <img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/e6b1fe1c-3838-4f95-9a95-2892bcb2ce75">
+
 
 
 
 If user enters a wrong option, the client throws and error and exits.
 
- 
+ <img width="452" alt="image" src="https://github.com/NA0724/UDP_SocketProgramming/assets/115744904/abdef085-d5d7-4049-a64b-adae281323f4">
+
