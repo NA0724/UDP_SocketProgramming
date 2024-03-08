@@ -5,15 +5,22 @@
 Install gcc for C program compiler 
  
 ### Steps: 
-- Copy the files 'client.c', 'server.c' and 'packet_payload.txt' to the desired location. 
+- Copy the files 'client.c', 'server.c', 'fcs.h' and 'packet_payload.txt' to the desired location. 
 - Run the below commands from the above location's terminal to compile the C programs: 
     `gcc server.c -o server`
     `gcc client.c -o client`
+    `gcc fcs.h -o fcs`
 - First the server should be started. To start the server, run: 
     `./server`
 - In a new terminal window, run below for running the client program: 
     `./client` 
 - Packets would start transmitting and output would be visible
+
+### Description
+
+- File client.c is responsible for creating request packets and sending them to the server/access point. 
+- File server.c is responsible for receiving request packets and processing them and responding back with respective response packets. 
+- File fcs.h is the header file that contains the logic for Frame Check Sequence caluclation for the data packets. FCS calculatiion and verification is done in both client and access point side. The verification is done before and after the frame is sent and recieved respectively.
 
 ## OUTPUTS
 
