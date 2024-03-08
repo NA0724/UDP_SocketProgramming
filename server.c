@@ -6,7 +6,7 @@
 #include "fcs.h"
 
 #define PORT 8080
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 2048
 #define SERVER_IP "127.0.0.1"
 
 #define START_OF_PACKET_ID 0XFFFF 			                                // Start of Packet identifier
@@ -68,27 +68,27 @@ struct dataPacket fillDataPacket(){
     data.payload.sequence_control = 0x0000;
     data.payload.frame_control.to_ds = 0;
     data.payload.frame_control.from_ds = 1;
+    memset(data.payload.payload, 0, 2312);
     memset(data.payload.address4, 0, sizeof(data.payload.address4)); // Address 4 set to 000000000000
     data.end_ID = END_OF_PACKET_ID;
-    memcpy(data.payload.address1, final_receiver_mac, sizeof(data.payload.address1));
-    memcpy(data.payload.address2, originator_mac, sizeof(data.payload.address2));
-    memcpy(data.payload.address3, access_point_mac, sizeof(data.payload.address3));
     return data;
 }
 
 
 // Function to set frame control fields for an Association Response
-void setAssociationResponse(struct ieee80211_frame *frame,  uint16_t durationID) {
+void setAssociationResponse(struct ieee80211_frame *frame) {
     frame->frame_control.type = 0; // Management type
     frame->frame_control.sub_type = 1; // Association Request subtype
-    frame->durationID = durationID; 
+    frame->durationID = 0xABCD;
+; 
 }
 
 // Function to set frame control fields for a Probe Request
-void setProbeResponse(struct ieee80211_frame *frame, uint16_t durationID) {
+void setProbeResponse(struct ieee80211_frame *frame) {
     //frame->frame_control.type = 0; // Management type
     //frame->frame_control.sub_type = 4; // Probe Request subtype (binary 0100)
-    frame->durationID = durationID; 
+    frame->durationID = 0xABCD;
+; 
 }
 
 // Function to set frame control fields for a RTS (Request To Send)
@@ -112,6 +112,8 @@ void setAck(struct ieee80211_frame *frame) {
 void showPacket(struct dataPacket data) {
     
     printf("\n\033[34m------Packet Information------ \n");
+    printf("Start of Packet: %u\n", data.start_ID);
+    printf("End of Packet: %u\n", data.end_ID);
     printf("Address 1: %02X%02X%02X%02X%02X%02X\n",
            data.payload.address1[0], data.payload.address1[1], data.payload.address1[2],
            data.payload.address1[3], data.payload.address1[4], data.payload.address1[5]);
@@ -132,8 +134,7 @@ void showPacket(struct dataPacket data) {
     printf("Sub Type: %u\n", data.payload.frame_control.sub_type);
     printf("FCS: %u\n", data.payload.fcs);
     printf("Duration ID: %u\n", data.payload.durationID);
-    printf("Sequence Control: %u\n", data.payload.sequence_control);
-    printf("\n\033[34m-----------------------------------------------\033[0m\n");
+    printf("Sequence Control: %u", data.payload.sequence_control);
 }
 
 int verifyFCS(struct dataPacket data, uint32_t receivedFCS) {
@@ -142,17 +143,24 @@ int verifyFCS(struct dataPacket data, uint32_t receivedFCS) {
     return (calculatedFCS == receivedFCS) ? 1 : 0;
 }
 
+
+
 int main() {
     int socket_fd;
     struct sockaddr_in cliaddr;
     struct dataPacket requestPacket, responsePacket;
     memset(&requestPacket, 0, sizeof(requestPacket)); 
     memset(&responsePacket, 0, sizeof(responsePacket));
-    char *message;
+    int f;
     int n, len;
     socklen_t cliaddr_len = sizeof(cliaddr);
     unsigned int type; // 2 bits
     unsigned int sub_type; // 4 bits
+    //store all packets in buffer
+    int buffer[BUFFER_SIZE];
+    for(int j = 0; j < BUFFER_SIZE;j++) {
+        buffer[j] = 0;
+    }
 
     // Creating socket file descriptor
     if ((socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
@@ -169,28 +177,27 @@ int main() {
     
     while(1)
     {
+        f=0;
         printf("----------------------------------------------------------------\n");
         n = recvfrom(socket_fd, &requestPacket, sizeof(requestPacket), 0 , (struct sockaddr *)&cliaddr, &cliaddr_len);
-        uint16_t sequenceControl = requestPacket.payload.sequence_control;
         printf(" Packet recieved from client........\n");
         showPacket(requestPacket);
-        printf("****************************************************************\n");
-        if ( sequenceControl > 0)  {
-            if (verifyFCS(requestPacket, requestPacket.payload.fcs) == 0){
-                uint8_t fragmentNumber = sequenceControl & 0x0F;
-                printf("\033[31mNo ACK Received for Frame No. %d\033[0m\n", fragmentNumber);
-                continue;
-            }
-        }
+        buffer[requestPacket.payload.sequence_control]+=1;
+        
+        printf("\n****************************************************************\n");
         if (verifyFCS(requestPacket, requestPacket.payload.fcs)) {
             type = requestPacket.payload.frame_control.type;
             sub_type = requestPacket.payload.frame_control.sub_type;
             responsePacket = fillDataPacket();
+            responsePacket.payload.sequence_control = requestPacket.payload.sequence_control;
+            memcpy(responsePacket.payload.address1, requestPacket.payload.address2, sizeof(responsePacket.payload.address1));
+            memcpy(responsePacket.payload.address2, requestPacket.payload.address1, sizeof(responsePacket.payload.address2));
+            memcpy(responsePacket.payload.address3, requestPacket.payload.address3, sizeof(responsePacket.payload.address3));
             if (type == 0 && sub_type == 0) {
-                setAssociationResponse(&responsePacket.payload, requestPacket.payload.durationID);
+                setAssociationResponse(&responsePacket.payload);
                 printf("\033[32mSending Association Response...\033[0m\n");
             } else if (type == 0 && sub_type == 4){
-                setProbeResponse(&responsePacket.payload, requestPacket.payload.durationID);
+                setProbeResponse(&responsePacket.payload);
                 printf("\033[32mSending Probe Response...\033[0m\n");
             } else if (type == 1 && sub_type == 11){
                 setCTS(&responsePacket.payload);
@@ -203,21 +210,41 @@ int main() {
                 memcpy(responsePacket.payload.payload, requestPacket.payload.payload, sizeof(requestPacket.payload.payload));
                 if ( requestPacket.payload.sequence_control > 0)  {
                     responsePacket.payload.durationID = requestPacket.payload.durationID - 1;
+                    if (buffer[requestPacket.payload.sequence_control] > 1){
+                            //duplicateframe
+                            printf("\033[31mNo ACK Received for Frame: ERROR DUPLICATE FRAME.\033[0m\n");
+                            f=1;
+                    } else if ( memcmp(&requestPacket.payload.address1, originator_mac, sizeof(originator_mac)) != 0 ){
+                        //addresserror
+                        f=1;
+                        printf("\033[31mNo ACK Received for Frame: ERROR INCORRECT MAC ADDRESS.\033[0m\n");
+                    }else if( requestPacket.payload.frame_control.order == 0){
+                        //out of sequence
+                        f=1;
+                        printf("\033[31mNo ACK Received for Frame: ERROR OUT OF SEQUENCE.\033[0m\n");
+                    }else if ( requestPacket.end_ID == 0){
+                        //end of frame
+                        f=1;
+                        printf("\033[31m No ACK Received for Frame: ERROR END OF PACKET MISSING.\033[0m\n");
+                    }
                 }
-                printf("\033[32mSending ACK Response...\033[0m\n");
+                if (f==0){
+                    printf("\033[32mSending ACK Response...\033[0m\n");
+                }           
             } 
             responsePacket.payload.fcs = getCheckSumValue(&responsePacket.payload, sizeof(responsePacket.payload), 0, sizeof(responsePacket.payload.fcs));
             if (sendto(socket_fd, &responsePacket, sizeof(responsePacket), 0, (struct sockaddr *)&cliaddr, cliaddr_len) < 0) {
                 perror("\033[31msendto failed.\033[0m\n");
-            } else {
+            } else if (f==0) {
                 printf("\nResponse sent with correct FCS:\n");
                 showPacket(responsePacket);
             }
         } else{
             // FCS mismatch, display error
-                printf("\033[31mError: FCS (Frame Check Sequence) Error.\033[0m\n");
+                printf("\033[31m ERROR: FCS (Frame Check Sequence) Error.\033[0m\n");
         } 
     }
+    
     printf("\n-----------------------------------------------------------------------------------------\n");
     
     
